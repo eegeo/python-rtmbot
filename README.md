@@ -1,3 +1,18 @@
+ordinary.cow
+============
+
+orindary.cow is eeGeo engineering's slack bot
+
+orindary.cow is quite ordinary, though it may read your DMs
+
+pip install -r /path/to/mapply-gis/pip_requirements.txt
+pip install -r requirements.txt
+PYTHONPATH=/path/to/mapply-gis/src python rtmbot.py
+
+get started with command: :cow: help
+
+Some TeamCity configuration can be found on the teamcity server at /TeamCity/.BuildServer/config/projects/_Root/pluginData/plugin-settings.xml
+
 python-rtmbot
 =============
 A Slack bot written in python that connects via the RTM API.

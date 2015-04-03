@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import logging
+import traceback
 
 from slackclient import SlackClient
 
@@ -18,10 +19,12 @@ def dbg(debug_string):
         logging.info(debug_string)
 
 class RtmBot(object):
-    def __init__(self, token):
+    def __init__(self, token, command_prefix, debug_channel_id):
         self.last_ping = 0
+        self.command_prefix = command_prefix
         self.token = token
         self.bot_plugins = []
+        self.debug_channel_id = debug_channel_id
         self.slack_client = None
     def connect(self):
         """Convenience method that creates Server instance"""
@@ -43,13 +46,42 @@ class RtmBot(object):
         if now > self.last_ping + 3:
             self.slack_client.server.ping()
             self.last_ping = now
+
     def input(self, data):
         if "type" in data:
+            # todo: do these as plugins rather than hardwired...
+            if data["type"] == "message":
+                if "text" in data:
+                    if data["text"] == self.get_command_prefix() + " reload":
+                        self.reload_plugins()
+                    elif data["text"][0:10] == self.get_command_prefix() + " help":
+                        self.help(data)
             function_name = "process_" + data["type"]
             dbg("got {}".format(function_name))
             for plugin in self.bot_plugins:
                 plugin.register_jobs()
                 plugin.do(function_name, data)
+
+    def help(self, data):
+        channel = self.slack_client.server.channels.find(data["channel"])
+        if channel != None:
+            if data["text"] == self.get_command_prefix() + " help":
+                commands = []
+                for plugin in self.bot_plugins:
+                    if plugin.is_command:
+                        commands.append(plugin.command_name())
+
+                message = "commands: {0}".format(" ".join(commands).encode('ascii','ignore'))
+                channel.send_message("{}".format(message))
+            else:
+                splits = data["text"].split(" ")
+                if len(splits) == 3:
+                    for plugin in self.bot_plugins:
+                        if plugin.is_command():
+                            if plugin.command_name() == splits[2]:
+                                usage = plugin.command_usage()
+                                channel.send_message("{}".format(usage.encode('ascii','ignore')))
+
     def output(self):
         for plugin in self.bot_plugins:
             limiter = False
@@ -62,9 +94,25 @@ class RtmBot(object):
                     message = output[1].encode('ascii','ignore')
                     channel.send_message("{}".format(message))
                     limiter = True
+
     def crons(self):
         for plugin in self.bot_plugins:
             plugin.do_jobs()
+
+    def reload_plugins(self):
+        for plugin in self.bot_plugins:
+            plugin.reload()
+
+    #todo: properties not getters...
+    def get_slack_client(self):
+        return self.slack_client
+
+    def get_command_prefix(self):
+        return self.command_prefix
+
+    def get_debug_channel_id(self):
+        return self._debug_channel_id
+
     def load_plugins(self):
         for plugin in glob.glob(directory+'/plugins/*'):
             sys.path.insert(0, plugin)
@@ -73,22 +121,37 @@ class RtmBot(object):
             logging.info(plugin)
             name = plugin.split('/')[-1][:-3]
 #            try:
-            self.bot_plugins.append(Plugin(name))
+            self.bot_plugins.append(Plugin(name, self))
 #            except:
 #                print "error loading plugin %s" % name
 
 class Plugin(object):
-    def __init__(self, name, plugin_config={}):
+    def __init__(self, name, bot, plugin_config={}):
         self.name = name
         self.jobs = []
         self.module = __import__(name)
         self.register_jobs()
         self.outputs = []
+        self.bot = bot
         if name in config:
             logging.info("config found for: " + name)
             self.module.config = config[name]
         if 'setup' in dir(self.module):
             self.module.setup()
+
+    #todo: property.
+    def getbot(self):
+        return self.bot
+
+    def is_command(self):
+        return "commandname" in dir(self.module)
+
+    def command_name(self):
+        return eval("self.module.commandname")()
+
+    def command_usage(self):
+        return eval("self.module.usage")()
+
     def register_jobs(self):
         if 'crontable' in dir(self.module):
             for interval, function in self.module.crontable:
@@ -99,14 +162,11 @@ class Plugin(object):
             self.module.crontable = []
     def do(self, function_name, data):
         if function_name in dir(self.module):
-            #this makes the plugin fail with stack trace in debug mode
-            if not debug:
-                try:
-                    eval("self.module."+function_name)(data)
-                except:
-                    dbg("problem in module {} {}".format(function_name, data))
-            else:
-                eval("self.module."+function_name)(data)
+            try:
+                eval("self.module."+function_name)(data, self)
+            except Exception as e:
+                self.outputs.append([self.bot.get_debug_channel_id(), "problem in module {0}".format(self.module)])
+                self.outputs.append([self.bot.get_debug_channel_id(), traceback.format_exc()])
         if "catch_all" in dir(self.module):
             try:
                 self.module.catch_all(data)
@@ -117,6 +177,7 @@ class Plugin(object):
             job.check()
     def do_output(self):
         output = []
+        output.extend(self.outputs)
         while True:
             if 'outputs' in dir(self.module):
                 if len(self.module.outputs) > 0:
@@ -126,7 +187,11 @@ class Plugin(object):
                     break
             else:
                 self.module.outputs = []
+        self.outputs = []
         return output
+
+    def reload(self):
+        reload(self.module)
 
 class Job(object):
     def __init__(self, interval, function):
@@ -173,7 +238,7 @@ if __name__ == "__main__":
 
     config = yaml.load(file('rtmbot.conf', 'r'))
     debug = config["DEBUG"]
-    bot = RtmBot(config["SLACK_TOKEN"])
+    bot = RtmBot(config["SLACK_TOKEN"], config["COMMAND_PREFIX"], config["DEBUG_CHANNEL"])
     site_plugins = []
     files_currently_downloading = []
     job_hash = {}
