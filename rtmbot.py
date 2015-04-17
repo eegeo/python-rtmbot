@@ -111,7 +111,7 @@ class RtmBot(object):
         return self.command_prefix
 
     def get_debug_channel_id(self):
-        return self._debug_channel_id
+        return self.debug_channel_id
 
     def load_plugins(self):
         for plugin in glob.glob(directory+'/plugins/*'):
