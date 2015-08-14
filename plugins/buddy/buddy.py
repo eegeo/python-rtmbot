@@ -4,7 +4,7 @@ import random
 crontable = []
 outputs = []
 
-buddies = ["tim.jenks", "mark.simpson", "scott", "malcolm.brown", "ian-hutchinson", "jonty", "oliver.norton"]
+buddies = ["tim.jenks", "mark.simpson", "scott", "malcolm.brown", "ian.hutchinson", "jonty", "oliver.norton"]
 cursor = -1
 
 def usage():
